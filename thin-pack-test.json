@@ -1,0 +1,25 @@
+{
+  "version": "INTELLIGENCE_PACK.1",
+  "assembledAt": "2026-09-08T00:00:00.000Z",
+  "country": { "code": "GH", "name": "Ghana" },
+  "economicBaseline": { "available": false, "indicators": {} },
+  "signals": [
+    {
+      "id": "thin-signal-1",
+      "signalType": "TRADE_ACTIVITY_PATTERN",
+      "title": "Trade activity pattern: EXPORT CODE:1801",
+      "trustState": "SOURCE_VERIFIED",
+      "limitations": ["Describes recorded source metrics only; does not establish demand, shortage, growth, price, profitability, buyer intent, or market size."],
+      "claimBoundaries": {
+        "mayClaim": "An official statistical source recorded a qualifying export pattern for this product code.",
+        "mayNotClaim": "This does not establish demand, shortage, market gap, growth, price change, or profitability."
+      },
+      "evidenceCount": 1
+    }
+  ],
+  "opportunities": [],
+  "businesses": [],
+  "matchesActionsOutcomes": [],
+  "newsDevelopments": [],
+  "contentSafety": { "layersPresent": { "economicBaseline": false, "signals": true, "opportunities": false, "businessCapabilities": false, "matchesActionsOutcomes": false, "newsDevelopments": false } }
+}

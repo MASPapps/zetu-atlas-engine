@@ -1,0 +1,15 @@
+2026-09-06 19:35:00,419 - INFO - 🚀 Pipeline started for 2026-09-06
+2026-09-06 19:35:00,419 - INFO - 📚 Fetching sources for: ['Nigeria', 'Kenya', 'Ethiopia', 'South Africa', 'Ghana']
+2026-09-06 19:35:00,449 - ERROR - ❌ Error fetching sources: [Errno 8] nodename nor servname provided, or not known
+2026-09-06 19:35:22,940 - INFO - 🚀 Pipeline started for 2026-09-06
+2026-09-06 19:35:22,941 - INFO - 📚 Fetching sources for: ['Nigeria', 'Kenya', 'Ethiopia', 'South Africa', 'Ghana']
+2026-09-06 19:35:22,952 - ERROR - ❌ Error fetching sources: [Errno 8] nodename nor servname provided, or not known
+2026-09-06 20:01:53,912 - INFO - 🚀 Pipeline started for 2026-09-06
+2026-09-06 20:01:53,912 - INFO - 📚 Fetching sources for: ['Nigeria', 'Kenya', 'Ethiopia', 'South Africa', 'Ghana']
+2026-09-06 20:01:53,940 - ERROR - ❌ Error fetching sources: [Errno 8] nodename nor servname provided, or not known
+2026-09-06 20:05:40,735 - INFO - 🚀 Started for 2026-09-06
+2026-09-06 20:05:40,735 - INFO - 📚 Fetching sources
+2026-09-06 20:05:40,835 - ERROR - ❌ Error: [Errno 8] nodename nor servname provided, or not known
+2026-09-06 20:06:01,519 - INFO - 🚀 Started for 2026-09-06
+2026-09-06 20:06:01,519 - INFO - 📚 Fetching sources
+2026-09-06 20:06:01,530 - ERROR - ❌ Error: [Errno 8] nodename nor servname provided, or not known
