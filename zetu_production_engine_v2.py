@@ -2,6 +2,19 @@
 """
 Zetu Atlas Production Engine v2 - WITH SUBSTACK AUTO-PUBLISH
 Sources → Claims → Verification → KPIs → Briefing → Substack
+
+*** LEGACY — NOT PART OF THE VERIFIED PHASE 7-9 / PHASE 10 PRODUCTION PATH. ***
+Confirmed during the Phase 10 scale-readiness audit (2026-09-09): run_pipeline()
+below (with its hardcoded country_list = ["Nigeria","Kenya","Ethiopia",
+"South Africa","Ghana"]) is invoked only from this file's own
+`if __name__ == "__main__"` block. No other file in this repo imports or
+calls run_pipeline(), no cron/launchd/systemd schedule references this
+script, and it publishes to Substack -- a different distribution channel
+than the verified Intelligence-Pack-driven path (zetu_closed_book_writer.py
+-> zetu_report_delivery.py, Resend). Do not generalize this file's country
+handling for Phase 10 scale-out; do not schedule or otherwise make this the
+live path without a separate, explicit decision to retire the closed-book
+path in its favor. Left in place, unmodified, as a manually-run legacy tool.
 """
 
 import os
