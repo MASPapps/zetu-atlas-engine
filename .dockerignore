@@ -1,0 +1,14 @@
+venv
+__pycache__
+*.pyc
+.env
+.env.*
+!.env.example
+.git
+*.log
+.DS_Store
+ghana-intelligence-pack.json
+phase9-ghana-pack.json
+closed_book_preview_*.json
+thin_pack_result.json
+thin-pack-test.json

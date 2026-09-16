@@ -1,0 +1,10 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+# Deliberately no cronSchedule here -- Correction 1: scheduled production
+# execution stays OFF until the fresh Intelligence pipeline exists.
+# Priority 1 scope is: deploy successfully, then trigger one manual run
+# against a known-good Intelligence Pack.
