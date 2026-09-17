@@ -259,21 +259,105 @@ Return only the revised briefing, nothing else."""
     return response.choices[0].message.content.strip()
 
 
+# --- Claim-to-source provenance hardening (narrow addition, this pipeline
+# stage only) ---
+#
+# audit_briefing_claims() already asks Claude for a `pack_source` per
+# statement (the writer's own docstring: "which allowed fact (by its
+# [TAG:id] prefix) supports it, or null if none"), but nothing previously
+# checked whether that string was REAL -- a plausible-looking but invented
+# tag (or a null one) on an otherwise SUPPORTED/QUALIFIED statement was
+# accepted exactly as if it were genuinely traceable. This closes that gap
+# without changing what SUPPORTED/QUALIFIED/UNKNOWN mean, without touching
+# generation, and without adding any new API call: pure, local,
+# post-processing of the audit response Claude already returns, using the
+# exact same fact tags the writer already put in the prompt.
+
+_TAG_PATTERN = re.compile(r"([A-Z][A-Z_]*):([A-Za-z0-9_-]+)")
+
+
+def _pack_valid_tags(pack):
+    """The exact set of [TAG:id] identifiers the model was actually shown
+    -- derived from _pack_fact_lines(pack) itself (the same function that
+    built the prompt), never a second, parallel list that could drift out
+    of sync with it."""
+    tags = set()
+    for line in _pack_fact_lines(pack):
+        m = re.match(r"^\[([A-Z][A-Z_]*:[A-Za-z0-9_-]+)\]", line)
+        if m:
+            tags.add(m.group(1))
+    return tags
+
+
+def _extract_source_tags(pack_source):
+    """Pulls every TAG:id token out of a pack_source string, tolerant of
+    brackets, missing brackets, or more than one tag joined by "and"/","
+    (all forms already observed in real audit output) -- but this is
+    tolerant PARSING only. Whether an extracted tag is real is a separate,
+    strict check (validate_claim_source)."""
+    if not pack_source:
+        return []
+    return [f"{m.group(1)}:{m.group(2)}" for m in _TAG_PATTERN.finditer(str(pack_source))]
+
+
+def validate_claim_source(pack_source, valid_tags):
+    """True only if pack_source names at least one tag, and EVERY tag it
+    names is a real fact the pack actually contains. A null/missing
+    pack_source, or one naming even a single invented/nonexistent tag
+    (alone or mixed with a real one), is never valid -- this is the "do
+    not allow Claude to invent a plausible-looking source identifier"
+    requirement, enforced locally rather than trusted from the model."""
+    tags = _extract_source_tags(pack_source)
+    if not tags:
+        return False
+    return all(t in valid_tags for t in tags)
+
+
+def annotate_provenance(audit, pack):
+    """Adds a `provenance_valid` field to each audit entry -- never
+    rewrites `claim_status` itself, so the SUPPORTED/QUALIFIED/UNKNOWN
+    distinction Claude made is fully preserved and still visible. A
+    statement that was SUPPORTED or QUALIFIED but fails provenance gets an
+    explanatory note appended, so a human reading the saved artifact can
+    see exactly why it was later treated as unresolved."""
+    valid_tags = _pack_valid_tags(pack)
+    annotated = []
+    for entry in audit:
+        entry = dict(entry)
+        is_valid = validate_claim_source(entry.get("pack_source"), valid_tags)
+        entry["provenance_valid"] = is_valid
+        if not is_valid and entry.get("claim_status") in ("SUPPORTED", "QUALIFIED"):
+            existing_note = (entry.get("notes") or "").strip()
+            flag = "[PROVENANCE CHECK FAILED: pack_source does not resolve to an allowed pack fact]"
+            entry["notes"] = f"{existing_note} {flag}".strip() if existing_note else flag
+        annotated.append(entry)
+    return annotated
+
+
+def _unresolved(audit):
+    """The gating definition, tightened: UNKNOWN (as before) OR a real
+    provenance failure on an otherwise SUPPORTED/QUALIFIED statement.
+    QUALIFIED itself is never treated as a failure -- only the specific
+    combination of "claims to be supported/qualified" + "cannot actually
+    be traced to a real pack fact" is unresolved."""
+    return [a for a in audit if a.get("claim_status") == "UNKNOWN" or not a.get("provenance_valid", True)]
+
+
 def run_closed_book_pipeline(pack_path, out_dir=".", max_repair_attempts=2, content_format="ATLAS_BRIEFING"):
     pack = load_intelligence_pack(pack_path)
     openai_client = OpenAI(api_key=OPENAI_API_KEY)
     anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
     briefing, meta = generate_closed_book_briefing(openai_client, pack, content_format)
-    audit = audit_briefing_claims(anthropic_client, pack, briefing)
-    unsupported = [a for a in audit if a.get("claim_status") == "UNKNOWN"]
+    audit = annotate_provenance(audit_briefing_claims(anthropic_client, pack, briefing), pack)
+    unsupported = _unresolved(audit)
 
     attempts = 0
     while unsupported and attempts < max_repair_attempts and briefing.strip() != "INSUFFICIENT_EVIDENCE":
         attempts += 1
         briefing = repair_briefing(openai_client, pack, briefing, unsupported)
-        audit = audit_briefing_claims(anthropic_client, pack, briefing)
-        unsupported = [a for a in audit if a.get("claim_status") == "UNKNOWN"]
+        audit = annotate_provenance(audit_briefing_claims(anthropic_client, pack, briefing), pack)
+        unsupported = _unresolved(audit)
 
     result = {
         "generatedAt": datetime.now().isoformat(),
