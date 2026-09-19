@@ -192,8 +192,9 @@ ok("SUBSTACK_NEWSLETTER sets a real length target (900-1400 words) proportional 
 ok("SUBSTACK_NEWSLETTER's referral CTA explicitly forbids asserting WHO benefits (the actual cause of a real audit rejection: 'forward this to a tourism analyst' was flagged as an unsupported claim)", lambda: (
     assert_("never as a claim about WHO specifically would benefit" in TASK_FRAMING["SUBSTACK_NEWSLETTER"]("Kenya"))
 ))
-ok("SUBSTACK_NEWSLETTER's missing-evidence section has an exact required heading, not just a soft suggestion (the earlier soft version got the section skipped twice in real runs)", lambda: (
-    assert_("**What's Missing**" in TASK_FRAMING["SUBSTACK_NEWSLETTER"]("Kenya"))
+ok("SUBSTACK_NEWSLETTER's missing-evidence disclosure now points at the universal EVIDENCE QUALITY section instead of a separate, redundant 'What's Missing' heading -- the standalone section got skipped in real runs because it duplicated EVIDENCE QUALITY, which never has been", lambda: (
+    assert_("EVIDENCE QUALITY" in TASK_FRAMING["SUBSTACK_NEWSLETTER"]("Kenya")),
+    assert_("**What's Missing**" not in TASK_FRAMING["SUBSTACK_NEWSLETTER"]("Kenya")),
 ))
 
 for fmt in ["LINKEDIN_ARTICLE", "YOUTUBE_SCRIPT", "SUBSTACK_NEWSLETTER"]:
