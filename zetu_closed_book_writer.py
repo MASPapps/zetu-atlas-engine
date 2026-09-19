@@ -559,9 +559,21 @@ def build_closed_book_prompt(pack, content_format="ATLAS_BRIEFING", angle=None):
             "it is not something to infer or fill in yourself."
         )
 
+    cta_override = ""
+    if pack.get("suggestedCTA"):
+        cta_override = (
+            f"\n\nTHE REQUIRED CALL TO ACTION FOR THIS PIECE IS: \"{pack['suggestedCTA']}\" -- this is a real, "
+            f"pre-selected Zetu action, chosen because of what THIS SPECIFIC story actually supports (a real "
+            f"named business, a real open opportunity, or neither), not a generic default. This OVERRIDES any "
+            f"other call-to-action example given above or in the required structure below -- adapt its wording "
+            f"naturally to this platform's voice and length, but the underlying ask must be this exact one. Do "
+            f"NOT invent a different call to action, and do not let the voice guide's generic sign-off line "
+            f"substitute for it."
+        )
+
     today = datetime.now().strftime("%Y-%m-%d")
 
-    return f"""{framing}{structure_block}{story_note}
+    return f"""{framing}{structure_block}{story_note}{cta_override}
 
 TODAY'S DATE IS {today}. Use this to judge tense correctly for every dated fact below -- see HARD RULE 11.
 
@@ -1015,6 +1027,63 @@ def _generate_story_record_with_repair(openai_client, anthropic_client, pack, ma
     return annotated, attempts
 
 
+# ============================================================
+# Real founder correction: the CTA in every platform piece was a fixed,
+# invented string ("if you run a business in X, list it on ZetuMap"),
+# never actually tied to a real ZetuMap feature. A real, tested,
+# already-proven-on-Ghana-data CTA vocabulary already existed in
+# Zetumap's lib/content-planner.mjs (Phase 8) and was never connected
+# to anything. This is a literal port of that vocabulary (the exact
+# same 7 strings) -- lib/content-planner.mjs remains the canonical
+# source; if it changes, this must be updated to match.
+# ============================================================
+
+SAFE_CTAS = {
+    "DISCOVER_BUSINESSES": "Discover businesses on Zetu",
+    "CLAIM_YOUR_BUSINESS": "Claim your business listing on Zetu",
+    "REGISTER_YOUR_BUSINESS": "Register your business on Zetu",
+    "EXPLORE_OPPORTUNITY": "Explore this opportunity signal on Zetu",
+    "PURSUE_VIA_OFFICIAL_SOURCE": "Pursue this opportunity through its official source, cited on Zetu",
+    "DECLARE_CAPABILITY": "Declare or update your business capability on Zetu",
+    "SUBMIT_FOR_CONSIDERATION": "Submit a relevant business or development for consideration on Zetu",
+}
+
+
+def select_safe_cta(story_record, pack):
+    """Generalizes content-planner.mjs's own per-brief CTA rules
+    (buildBusinessSpotlightBrief / buildOpportunitySpotlightBrief /
+    buildZetuShowEpisodeBrief) across whatever a Story Record actually
+    supports, since a story can carry EITHER a BUILDER or an OPPORTUNITY
+    (or neither) -- content-planner.mjs never had to choose between the
+    two in one brief, so this priority order (a named business first,
+    since it's the most specific, then a real opportunity, else the
+    always-safe default) is this function's own synthesis on top of the
+    real vocabulary, not a direct copy of a single JS function. Must be
+    called with the SAME pack the story was extracted/narrowed from --
+    this is where opportunity active/retired state is still resolvable,
+    which a downstream story-pack (build_story_pack()'s output) no
+    longer carries."""
+    builder = story_record.get("BUILDER", {})
+    if builder.get("status") == "supported":
+        return SAFE_CTAS["CLAIM_YOUR_BUSINESS"]
+
+    opportunity = story_record.get("OPPORTUNITY", {})
+    if opportunity.get("status") == "supported":
+        opp_ids = [t.split(":", 1)[1] for t in _extract_source_tags(opportunity.get("pack_source")) if t.startswith("OPPORTUNITY:")]
+        # A real run showed OPPORTUNITY can be "supported" while citing a
+        # non-opportunity tag (e.g. an index ranking) -- the extraction
+        # correctly traced it to a real fact, but there is no actual
+        # canonical_opportunities record, so no real "official source" to
+        # send anyone to. PURSUE_VIA_OFFICIAL_SOURCE would be misleading
+        # in that case; only use it when a real opportunity id is present.
+        if opp_ids:
+            opportunities_by_id = {o["id"]: o for o in pack.get("opportunities", [])}
+            is_retired = any("MAY_NOT_CLAIM" in (opportunities_by_id.get(oid, {}).get("flags") or []) for oid in opp_ids)
+            return SAFE_CTAS["DISCOVER_BUSINESSES"] if is_retired else SAFE_CTAS["PURSUE_VIA_OFFICIAL_SOURCE"]
+
+    return SAFE_CTAS["DISCOVER_BUSINESSES"]
+
+
 def run_story_record_pipeline(pack_path, out_dir=".", angle=None, max_repair_attempts=3):
     """Pack -> ONE approved Story Record for ONE story (angle). Never
     forces an angle the pack lacks material for -- that's
@@ -1031,6 +1100,11 @@ def run_story_record_pipeline(pack_path, out_dir=".", angle=None, max_repair_att
     annotated, attempts = _generate_story_record_with_repair(openai_client, anthropic_client, pack, max_repair_attempts)
     supported_count = sum(1 for v in annotated.values() if v["status"] == "supported")
     country_code = pack.get("country", {}).get("code", "XX")
+    # Computed HERE, not at platform-generation time -- this is the only
+    # point where the real (angle-narrowed) pack is still in scope to
+    # resolve an opportunity's active/retired state. build_story_pack()
+    # carries the result forward as plain data.
+    suggested_cta = select_safe_cta(annotated, pack)
 
     result = {
         "generatedAt": datetime.now().isoformat(),
@@ -1043,6 +1117,7 @@ def run_story_record_pipeline(pack_path, out_dir=".", angle=None, max_repair_att
         "storyRecord": annotated,
         "supportedFieldCount": supported_count,
         "totalFieldCount": len(annotated),
+        "suggestedCTA": suggested_cta,
     }
 
     suffix = angle or "full"
@@ -1118,6 +1193,7 @@ def build_story_pack(story_result):
         "country": {"code": story_result.get("packCountryCode"), "name": story_result.get("packCountry")},
         "assembledAt": story_result.get("packAssembledAt"),
         "storyRecord": story_result["storyRecord"],
+        "suggestedCTA": story_result.get("suggestedCTA"),
     }
 
 

@@ -17,7 +17,7 @@ from zetu_closed_book_writer import (
     _story_record_to_audit_entries, annotate_story_record,
     _unresolved_story_fields, build_story_pack, _pack_fact_lines,
     _pack_valid_tags, validate_claim_source, build_closed_book_prompt,
-    _select_best_story_candidate,
+    _select_best_story_candidate, SAFE_CTAS, select_safe_cta,
 )
 
 failures = []
@@ -226,6 +226,85 @@ ok("a single candidate is trivially selected (the max_angles=1 / thin-pack case)
 ok("reproduces the actual real-world finding: a lower-trust angle (tech_and_innovation, 8 fields) correctly beats a higher-trust angle (investment_signals, 4 fields) that happens to be ranked first", lambda: (
     assert_(_select_best_story_candidate([{"supportedFieldCount": 4}, {"supportedFieldCount": 8}]) == 1)
 ))
+
+# ============================================================
+# 7. Real CTA logic, ported from lib/content-planner.mjs (Phase 8) --
+# fix after the founder correction that the previous CTA text was
+# invented, not tied to any real ZetuMap feature.
+# ============================================================
+print("\n=== REAL CTA LOGIC (ported from content-planner.mjs) ===")
+
+CTA_PACK = {
+    "country": {"code": "KE", "name": "Kenya"},
+    "opportunities": [
+        {"id": "active-opp", "title": "Active One", "flags": []},
+        {"id": "retired-opp", "title": "Retired One", "flags": ["MAY_NOT_CLAIM"]},
+    ],
+}
+
+def _sr(**overrides):
+    base = {k: {"value": None, "pack_source": None, "status": "unsupported"} for k in STORY_RECORD_FIELD_DEFINITIONS}
+    base.update(overrides)
+    return base
+
+ok("SAFE_CTAS is a literal, exact port of lib/content-planner.mjs's vocabulary -- same 7 keys, same text", lambda: (
+    assert_(set(SAFE_CTAS.keys()) == {
+        "DISCOVER_BUSINESSES", "CLAIM_YOUR_BUSINESS", "REGISTER_YOUR_BUSINESS", "EXPLORE_OPPORTUNITY",
+        "PURSUE_VIA_OFFICIAL_SOURCE", "DECLARE_CAPABILITY", "SUBMIT_FOR_CONSIDERATION",
+    }),
+    assert_(SAFE_CTAS["CLAIM_YOUR_BUSINESS"] == "Claim your business listing on Zetu"),
+    assert_(SAFE_CTAS["PURSUE_VIA_OFFICIAL_SOURCE"] == "Pursue this opportunity through its official source, cited on Zetu"),
+))
+
+ok("a story with a supported BUILDER gets CLAIM_YOUR_BUSINESS, even if OPPORTUNITY is also supported (business takes priority)", lambda: (
+    lambda sr=_sr(
+        BUILDER={"value": "Real Biz", "pack_source": "[BUSINESS:b1]", "status": "supported"},
+        OPPORTUNITY={"value": "Active One", "pack_source": "[OPPORTUNITY:active-opp]", "status": "supported"},
+    ): assert_(select_safe_cta(sr, CTA_PACK) == SAFE_CTAS["CLAIM_YOUR_BUSINESS"])
+)())
+
+ok("a story with a supported OPPORTUNITY citing an ACTIVE opportunity gets PURSUE_VIA_OFFICIAL_SOURCE", lambda: (
+    lambda sr=_sr(OPPORTUNITY={"value": "Active One", "pack_source": "[OPPORTUNITY:active-opp]", "status": "supported"}): (
+        assert_(select_safe_cta(sr, CTA_PACK) == SAFE_CTAS["PURSUE_VIA_OFFICIAL_SOURCE"])
+    )
+)())
+
+ok("a story with a supported OPPORTUNITY citing a RETIRED opportunity falls back to DISCOVER_BUSINESSES, never invites pursuing a dead opportunity", lambda: (
+    lambda sr=_sr(OPPORTUNITY={"value": "Retired One", "pack_source": "[OPPORTUNITY:retired-opp]", "status": "supported"}): (
+        assert_(select_safe_cta(sr, CTA_PACK) == SAFE_CTAS["DISCOVER_BUSINESSES"])
+    )
+)())
+
+ok("a story with NEITHER a supported BUILDER nor OPPORTUNITY falls back to the always-safe default", lambda: (
+    assert_(select_safe_cta(_sr(), CTA_PACK) == SAFE_CTAS["DISCOVER_BUSINESSES"])
+))
+
+ok("a real run finding: OPPORTUNITY can be 'supported' while citing a NON-opportunity tag (e.g. an index) -- there is no real official source to send anyone to, so this must fall back to the safe default, not PURSUE_VIA_OFFICIAL_SOURCE", lambda: (
+    lambda sr=_sr(OPPORTUNITY={"value": "Investment in improving labour opportunities", "pack_source": "[INDEX:ZLOI]", "status": "supported"}): (
+        assert_(select_safe_cta(sr, CTA_PACK) == SAFE_CTAS["DISCOVER_BUSINESSES"], "must not claim an official source exists when the citation isn't a real opportunity record")
+    )
+)())
+
+ok("build_story_pack() carries suggestedCTA through unchanged", lambda: (
+    lambda story_pack=build_story_pack({**STORY_RESULT, "suggestedCTA": SAFE_CTAS["CLAIM_YOUR_BUSINESS"]}): (
+        assert_(story_pack["suggestedCTA"] == "Claim your business listing on Zetu"),
+    )
+)())
+
+ok("a story-pack WITH a suggestedCTA gets the override note in its real prompt, naming the exact CTA text", lambda: (
+    lambda story_pack=build_story_pack({**STORY_RESULT, "suggestedCTA": SAFE_CTAS["CLAIM_YOUR_BUSINESS"]}): (
+        lambda prompt=build_closed_book_prompt(story_pack, "LINKEDIN_ARTICLE"): (
+            assert_("THE REQUIRED CALL TO ACTION" in prompt),
+            assert_("Claim your business listing on Zetu" in prompt),
+        )
+    )()
+)())
+
+ok("a story-pack with NO suggestedCTA (or a normal, non-story pack) gets no override -- falls back to the format's own default CTA instruction, backward compatible", lambda: (
+    lambda prompt=build_closed_book_prompt(build_story_pack(STORY_RESULT), "LINKEDIN_ARTICLE"): (
+        assert_("THE REQUIRED CALL TO ACTION" not in prompt),
+    )
+)())
 
 print(f"\n{'PASS' if not failures else f'FAIL ({len(failures)}): ' + ', '.join(failures)}")
 import sys
