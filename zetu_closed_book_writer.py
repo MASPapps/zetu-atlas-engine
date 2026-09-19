@@ -475,8 +475,9 @@ _FIVE_PART_STRUCTURE_FORMATS = ("ATLAS_BRIEFING", "LINKEDIN_ARTICLE", "SUBSTACK_
 def _five_part_structure_block(spoken=False):
     if spoken:
         return (
-            "REQUIRED STRUCTURE (5 beats, in this order -- narrate them naturally as part of the script; do NOT "
-            "say these labels out loud, they are for you only, not the viewer): "
+            "REQUIRED STRUCTURE -- ALL 5 beats below MUST appear in the script, every time, in this order, with no "
+            "exceptions -- never silently drop a beat just because it's thin (narrate them naturally; do NOT say "
+            "these labels out loud, they are for you only, not the viewer): "
             "(1) HOOK -- open with the single most concrete fact or question. "
             "(2) WHAT'S HAPPENING / WHY IT MATTERS / WHO'S AFFECTED -- the real facts, connected. "
             "(3) THE OPPORTUNITY -- name ONE specific, real opportunity from the facts (never a vague sector). If "
@@ -488,14 +489,24 @@ def _five_part_structure_block(spoken=False):
             "(5) CTA -- the SPECIFIC invitation already described above (e.g. list on ZetuMap, subscribe to Zetu "
             "Atlas). The voice guide's generic sign-off ('This is The Zetu Atlas. One question. One economy. "
             "Together.') is NOT this CTA -- if you use that line at all, say it AFTER the specific CTA as a "
-            "closing flourish, never instead of it."
+            "closing flourish, never instead of it. "
+            "NEVER skip a beat entirely on a thin story. If the facts genuinely don't support a real answer for "
+            "one (e.g. no real opportunity or affected business exists), say that plainly in one honest sentence "
+            "(e.g. 'no specific opportunity is identified in the available evidence for this story') -- an honest "
+            "'nothing here yet' beat is correct; a silently skipped one is not."
         )
     return (
-        "REQUIRED STRUCTURE -- use these exact section labels so the piece is legible at a glance:\n"
+        "REQUIRED STRUCTURE -- ALL 7 labels below MUST appear in your output, every time, in this exact order, "
+        "with no exceptions -- never drop a label entirely just because a section is thin. If a section has "
+        "nothing real to say, the label still appears, followed by one honest sentence saying there's nothing "
+        "there (see THE OPPORTUNITY's own instruction below for the exact pattern). A missing label is a "
+        "structural error, not a stylistic choice:\n"
         "HOOK: <one sentence -- the single most concrete fact or a genuine open question>\n"
         "WHAT'S HAPPENING: <the core facts, in your own words>\n"
         "WHY IT MATTERS: <what those facts mean, using only inferences the facts themselves support>\n"
-        "WHO'S AFFECTED: <which sectors, businesses, or geographies, per the facts>\n"
+        "WHO'S AFFECTED: <which sectors, businesses, or geographies, per the facts. If nothing in the facts names "
+        "a specific sector, business, or geography beyond the country itself, say that plainly -- do not drop "
+        "this label.>\n"
         "THE OPPORTUNITY: <name ONE specific, real opportunity from the facts -- never a vague sector. If a fact "
         "links a specific business to it, name them together; if NO fact links any business to it, state plainly "
         "that no business match is recorded yet for this opportunity -- never imply one that isn't in the facts. "
@@ -506,7 +517,12 @@ def _five_part_structure_block(spoken=False):
         "CTA: <the SPECIFIC invitation already described above (e.g. list on ZetuMap, subscribe to Zetu Atlas). "
         "The voice guide's generic sign-off ('This is The Zetu Atlas. One question. One economy. Together.') is "
         "NOT this CTA -- if you use that line at all, put it AFTER this specific CTA as a closing flourish, never "
-        "instead of it.>"
+        "instead of it.>\n"
+        "NEVER leave a section's content empty on a thin story. If the facts genuinely don't support a real "
+        "answer for a section (e.g. no real opportunity or affected business exists), write ONE honest sentence "
+        "saying so plainly (e.g. 'No specific opportunity is identified in the available evidence for this "
+        "story.') -- an honest 'nothing here yet' sentence under the label is correct; leaving the label with "
+        "nothing under it is not."
     )
 
 
@@ -672,6 +688,8 @@ SENTENCES FLAGGED AS UNSUPPORTED:
 {flagged}
 
 Rewrite the briefing. For EACH flagged sentence: either delete it, or replace it with a direct restatement of an allowed fact. Leave every OTHER sentence in the briefing exactly as it is -- do not shorten, rewrite, or remove anything that wasn't flagged, and do not add anything new. The rest of the briefing was fine; only the flagged sentences are the problem. Deleting a handful of sentences from an otherwise-good briefing is normal editing, not a reason to discard the whole piece -- only respond with INSUFFICIENT_EVIDENCE if EVERY SINGLE sentence in the briefing was flagged (which is not the case here).
+
+ONE exception to "do not add anything new": if this briefing uses the required section-label structure (HOOK:, WHAT'S HAPPENING:, etc.) and deleting a flagged sentence would leave a required label with nothing under it, add exactly ONE short honest sentence there instead (e.g. "No specific opportunity is identified in the available evidence for this story.") -- a label with an honest "nothing here" sentence is required by the format, not new content; a label left with nothing at all under it is a structural error.
 
 Return only the revised briefing, nothing else."""
     response = openai_client.chat.completions.create(

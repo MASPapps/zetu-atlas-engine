@@ -97,6 +97,24 @@ ok("EVIDENCE QUALITY section explicitly requires using real trust-state vocabula
 ))
 
 # ============================================================
+# 2c. Never-silently-empty-a-section rule -- fix after a real weekly
+# pipeline run produced a story with no real OPPORTUNITY/BUILDER/ACTION
+# and the model left WHO'S AFFECTED / THE OPPORTUNITY / EVIDENCE
+# QUALITY completely blank instead of saying so honestly.
+# ============================================================
+ok("the written structure explicitly forbids a silently empty section on a thin story, requiring an honest 'nothing here' sentence instead", lambda: (
+    lambda block=_five_part_structure_block(spoken=False): (
+        assert_("NEVER leave a section's content empty" in block),
+        assert_("leaving the label with" in block),
+    )
+)())
+ok("the spoken variant carries the identical never-skip-a-beat requirement", lambda: (
+    lambda block=_five_part_structure_block(spoken=True): (
+        assert_("NEVER skip a beat entirely" in block),
+    )
+)())
+
+# ============================================================
 # 2b. CTA vs. voice_guide.txt's generic sign-off -- fix after a real run
 # dropped the specific per-format CTA entirely and used only the
 # voice guide's hardcoded "End every briefing with..." sign-off instead.
