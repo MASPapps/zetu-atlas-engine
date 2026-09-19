@@ -284,6 +284,15 @@ TASK_FRAMING = {
         f"line for this exact issue "
         f"(not a generic template) -- this is a required part of the output, not optional."
     ),
+    "SHORT_FORM_VIDEO": lambda country, fact_count=0: (
+        f"Write a short-form video script about {country}, in Michael's voice, for TikTok/Reels/YouTube Shorts "
+        f"viewers -- young, digital-native, scrolling fast, zero patience for a slow start. TARGET 100-150 words "
+        f"(45-90 seconds spoken) -- this is the shortest, most compressed format; pick the SINGLE most striking "
+        f"real fact from the story and build the whole clip around it, rather than trying to summarize "
+        f"everything the story contains. {_ANTI_DRIFT_RULE} Short sentences. No bullet points, no markdown, no "
+        f"throat-clearing context the viewer doesn't need in the first 2 seconds. This is entertainment/discovery "
+        f"first, not a business memo."
+    ),
 }
 
 # Per-format generation/repair token ceiling -- a fixed 1500 (the original
@@ -296,6 +305,7 @@ _MAX_TOKENS_BY_FORMAT = {
     "LINKEDIN_ARTICLE": 1800,
     "YOUTUBE_SCRIPT": 3000,
     "SUBSTACK_NEWSLETTER": 2500,
+    "SHORT_FORM_VIDEO": 400,
 }
 _AUDIT_MAX_TOKENS_BY_FORMAT = {
     "ATLAS_BRIEFING": 2000,
@@ -307,6 +317,7 @@ _AUDIT_MAX_TOKENS_BY_FORMAT = {
     "LINKEDIN_ARTICLE": 4000,
     "YOUTUBE_SCRIPT": 6000,
     "SUBSTACK_NEWSLETTER": 6000,
+    "SHORT_FORM_VIDEO": 1200,
 }
 _OUTPUT_SUFFIX = {
     "ATLAS_BRIEFING": "atlas",
@@ -314,6 +325,7 @@ _OUTPUT_SUFFIX = {
     "LINKEDIN_ARTICLE": "linkedin",
     "YOUTUBE_SCRIPT": "youtube_script",
     "SUBSTACK_NEWSLETTER": "substack_newsletter",
+    "SHORT_FORM_VIDEO": "short_form_video",
 }
 
 
@@ -526,6 +538,30 @@ def _five_part_structure_block(spoken=False):
     )
 
 
+# Short-form video (TikTok/Reels/Shorts) deliberately does NOT use the
+# 5-part structure -- a 45-90 second clip cannot fit 5 distinct
+# sections with real content each (Phase C just proved even a full
+# article-length piece can run out of material for 5 sections on a
+# thin story; forcing that shape into 100-150 words would be worse).
+# 3 beats instead: HOOK, THE POINT (one real fact, not a summary), CTA.
+_SHORT_FORM_STRUCTURE_FORMATS = ("SHORT_FORM_VIDEO",)
+
+
+def _short_form_structure_block():
+    return (
+        "REQUIRED STRUCTURE -- exactly 3 beats, narrated naturally as spoken narration for a 45-90 second video "
+        "(do NOT say these labels out loud, they are for you only): "
+        "(1) HOOK -- the single most concrete, striking fact or question, in the first 1-2 sentences. This has to "
+        "earn the next few seconds of attention immediately -- no warm-up, no context-setting first. "
+        "(2) THE POINT -- ONE real insight or fact from the story, explained in plain, fast, spoken language. Do "
+        "not try to cover more than one idea -- a short video that tries to say five things says nothing. "
+        "(3) CTA -- the SPECIFIC invitation already described above. The voice guide's generic sign-off is NOT "
+        "this CTA -- if used at all, it comes after, never instead of it. "
+        "NEVER pad to fill time -- if the story only genuinely supports 15 real seconds of content, write a "
+        "15-second script, not a padded 90-second one."
+    )
+
+
 def build_closed_book_prompt(pack, content_format="ATLAS_BRIEFING", angle=None):
     """CONTRACT: when `angle` is given, `pack` MUST already be the
     angle-narrowed pack (_narrow_pack_for_angle's output) -- this
@@ -563,6 +599,8 @@ def build_closed_book_prompt(pack, content_format="ATLAS_BRIEFING", angle=None):
         structure_block = "\n\n" + _five_part_structure_block(spoken=False)
     elif content_format == "YOUTUBE_SCRIPT":
         structure_block = "\n\n" + _five_part_structure_block(spoken=True)
+    elif content_format in _SHORT_FORM_STRUCTURE_FORMATS:
+        structure_block = "\n\n" + _short_form_structure_block()
 
     story_note = ""
     if "storyRecord" in pack:
@@ -1334,7 +1372,7 @@ if __name__ == "__main__":
         print("Usage: python3 zetu_closed_book_writer.py <intelligence_pack.json> [out_dir] [FORMAT] [--multi-angle]")
         print("       python3 zetu_closed_book_writer.py <intelligence_pack.json> [out_dir] --story")
         print("       python3 zetu_closed_book_writer.py <story_record.json> [out_dir] <FORMAT> --from-story")
-        print("       FORMAT: ATLAS_BRIEFING|ZETU_SHOW_COLD_OPEN|LINKEDIN_ARTICLE|YOUTUBE_SCRIPT|SUBSTACK_NEWSLETTER")
+        print("       FORMAT: ATLAS_BRIEFING|ZETU_SHOW_COLD_OPEN|LINKEDIN_ARTICLE|YOUTUBE_SCRIPT|SUBSTACK_NEWSLETTER|SHORT_FORM_VIDEO")
         sys.exit(1)
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     out_dir = args[1] if len(args) > 1 else "."
