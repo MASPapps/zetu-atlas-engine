@@ -95,7 +95,17 @@ def _pack_fact_lines(pack):
     """Flattens the pack into explicit, citable fact lines -- exactly what
     the writer is allowed to draw on. Each line carries its own
     provenance inline so the model sees the boundary attached to the
-    fact, not as a separate abstract rule."""
+    fact, not as a separate abstract rule.
+
+    A pack carrying a "storyRecord" key (an approved Zetu Story Record,
+    see build_story_pack()) is a DIFFERENT input shape -- its fact lines
+    come ONLY from the story's own supported fields, never the raw pack
+    categories below. This is what makes every downstream function
+    (_pack_valid_tags, annotate_provenance, build_closed_book_prompt)
+    work UNCHANGED against a story record: they all just call this
+    function and never know or care which shape produced the lines."""
+    if "storyRecord" in pack:
+        return _story_record_fact_lines(pack["storyRecord"])
     lines = []
 
     eb = pack.get("economicBaseline", {})
@@ -539,9 +549,19 @@ def build_closed_book_prompt(pack, content_format="ATLAS_BRIEFING", angle=None):
     elif content_format == "YOUTUBE_SCRIPT":
         structure_block = "\n\n" + _five_part_structure_block(spoken=True)
 
+    story_note = ""
+    if "storyRecord" in pack:
+        story_note = (
+            "\n\nNOTE: the facts below are NOT raw pack data -- they are an already-approved, curated Zetu "
+            "Story Record (a shared editorial interpretation already vetted for this specific story, one shared "
+            "across every platform's version of it). Present them for this platform; do not reinterpret or "
+            "second-guess the story, and a field that isn't listed below was deliberately marked unsupported -- "
+            "it is not something to infer or fill in yourself."
+        )
+
     today = datetime.now().strftime("%Y-%m-%d")
 
-    return f"""{framing}{structure_block}
+    return f"""{framing}{structure_block}{story_note}
 
 TODAY'S DATE IS {today}. Use this to judge tense correctly for every dated fact below -- see HARD RULE 11.
 
@@ -736,6 +756,343 @@ def _unresolved(audit):
     return [a for a in audit if a.get("claim_status") == "UNKNOWN" or not a.get("provenance_valid", True)]
 
 
+# ============================================================
+# Zetu Story Record -- the shared editorial interpretation layer between
+# the Intelligence Pack and any platform generator (real founder
+# correction: "Intelligence Pack -> Zetu Story Record -> platform-
+# specific content", never Pack -> platform directly). A field is never
+# invented to complete the template -- unsupported fields are expected
+# and correct. Reuses annotate_provenance() and _pack_valid_tags()
+# COMPLETELY UNCHANGED (see _story_record_to_audit_entries below); the
+# only new logic is the extraction prompt, the semantic claim audit
+# (mirrors audit_briefing_claims()'s own shape), and the repair loop
+# for rejected fields.
+# ============================================================
+
+STORY_RECORD_FIELD_DEFINITIONS = {
+    "SIGNAL": "what happened or what was discovered, per the facts",
+    "OBJECT": "a tangible object, product, or service that can carry the story -- ONLY if the facts name one",
+    "QUESTION": "the central investigative question this story raises -- must come from a real tension between facts, never a generic question",
+    "MONEY": "how or where money/value moves, per the facts",
+    "CHAIN": "the relevant value-chain step(s) shown in the facts",
+    "GAP": "where value or opportunity is being missed or underdeveloped, per the facts",
+    "PROOF": "the specific evidence that supports this story",
+    "BUILDER": "a named person, business, or organisation already acting -- ONLY if the facts name one",
+    "OPPORTUNITY": "a specific participation/business/investment opportunity the facts actually support -- never a vague sector",
+    "OBSTACLE": "what prevents or limits it -- ONLY if the facts state one",
+    "ACTION": "a useful, concrete audience action grounded in the facts",
+    "OPEN_THREAD": "an unresolved question worth following, per the facts",
+}
+# PLACE is deliberately NOT in this dict -- it's a structural fact
+# (country/economy) known before any interpretation, never an LLM
+# extraction or an audited claim. See build_story_pack()/CLI output,
+# which surface it directly from pack["country"].
+
+
+def _story_record_fact_lines(story_record):
+    """Fact lines for an approved Story Record -- the ONLY facts a
+    platform generator may draw from once a story exists, per "must not
+    independently interpret the raw Intelligence Pack". A field with no
+    supported value produces NO line at all -- nothing to cite means
+    nothing is available to the platform generator, exactly matching
+    "mark it unsupported/not available", never fabricated to look
+    complete."""
+    lines = []
+    for field, data in story_record.items():
+        if data.get("status") != "supported" or data.get("value") is None:
+            continue
+        # NOTE: deliberately does NOT print the field's original underlying
+        # pack_source (e.g. "[ECONOMIC:gdp_usd]") inside the visible text --
+        # a real run showed the audit model citing THAT embedded tag as its
+        # source instead of the actual, valid [STORY:field] tag, since it
+        # looks exactly like a citation. The original tag was already
+        # verified once during story extraction; it has no further role
+        # once the story is approved -- [STORY:field] is the only citation
+        # that should exist from here on.
+        lines.append(f"[STORY:{field}] {data['value']} (a fact from the approved Story Record, already independently verified)")
+    return lines
+
+
+def _story_record_prompt(pack):
+    facts = _pack_fact_lines(pack)
+    facts_block = "\n".join(f"- {f}" for f in facts)
+    fields_block = "\n".join(f"- {name}: {desc}" for name, desc in STORY_RECORD_FIELD_DEFINITIONS.items())
+    return f"""You are extracting a structured Zetu Story Record from a fixed set of allowed facts. This is a
+shared editorial interpretation layer -- platform writers (LinkedIn, YouTube, Substack) will build their
+pieces ONLY from what you fill in here, so honesty about gaps matters more than completeness.
+
+=== THE ONLY FACTS YOU MAY USE ===
+{facts_block}
+=== END OF FACTS ===
+
+For EACH of the following fields, either fill it with a value DIRECTLY traceable to one or more of the facts
+above (citing the exact [TAG:id] that supports it), or mark it unsupported. DO NOT invent a value just to
+complete the template -- an incomplete Story Record, with several fields marked unsupported, is expected and
+correct when the facts don't cover every field. Never upgrade a signal/opportunity's evidence tier, never
+imply a business-opportunity match the facts don't state, never invent a builder, object, or obstacle.
+
+FIELDS:
+{fields_block}
+
+Return ONLY a JSON object, no markdown, no commentary, in exactly this shape:
+{{"FIELD_NAME": {{"value": "the extracted value" or null, "pack_source": "[TAG:id]" or null}}, ...}}
+One entry per field above, using the exact field names given.
+
+Begin:"""
+
+
+def extract_story_record(openai_client, pack):
+    prompt = _story_record_prompt(pack)
+    response = openai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+        max_tokens=2000,
+    )
+    text = response.choices[0].message.content.strip()
+    if "```" in text:
+        text = text.split("```")[1].replace("json", "", 1).strip()
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError:
+        raw = {}
+    # Defensive: every defined field is present in the result even if the
+    # model omitted one -- a missing field is treated as unsupported,
+    # never silently dropped from the record.
+    return {
+        name: {"value": (raw.get(name) or {}).get("value"), "pack_source": (raw.get(name) or {}).get("pack_source")}
+        for name in STORY_RECORD_FIELD_DEFINITIONS
+    }
+
+
+def audit_story_record_claims(anthropic_client, pack, story_record):
+    """Mirrors audit_briefing_claims()'s own shape exactly, applied to
+    story fields instead of briefing sentences -- an independent
+    SEMANTIC check that a field's VALUE genuinely matches what its
+    cited fact says, not just that the cited tag exists (that
+    structural check is _story_record_to_audit_entries + the unchanged
+    annotate_provenance(), a separate, deterministic layer)."""
+    filled = {k: v for k, v in story_record.items() if v.get("value") is not None}
+    if not filled:
+        return {}
+
+    facts_block = "\n".join(f"- {f}" for f in _pack_fact_lines(pack))
+    fields_block = "\n".join(f'- {k}: "{v["value"]}" (cites {v.get("pack_source")})' for k, v in filled.items())
+    prompt = f"""You are auditing a structured Story Record for factual accuracy against a fixed set of allowed facts.
+
+ALLOWED FACTS (the ONLY things any field is permitted to state):
+{facts_block}
+
+STORY RECORD FIELDS TO AUDIT:
+{fields_block}
+
+For EACH field above, return a JSON object with:
+  field: the field name
+  claim_status: "SUPPORTED" (the value directly matches its cited fact), "QUALIFIED" (a fair restatement/simplification), or "UNKNOWN" (the value is not traceable to its cited fact, misstates it, or the citation doesn't support it)
+  notes: brief reason
+
+Return ONLY a JSON array, no markdown, no commentary."""
+
+    response = anthropic_client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1500,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = response.content[0].text
+    if "```" in text:
+        text = text.split("```")[1].replace("json", "", 1).strip()
+    try:
+        results = json.loads(text)
+    except json.JSONDecodeError:
+        return {k: "UNKNOWN" for k in filled}
+    return {r.get("field"): r.get("claim_status", "UNKNOWN") for r in results if isinstance(r, dict) and r.get("field")}
+
+
+def _story_record_to_audit_entries(story_record):
+    """Adapts filled story fields into the exact {statement, pack_source,
+    claim_status} shape annotate_provenance() already expects -- reuses
+    that function COMPLETELY UNCHANGED rather than reimplementing
+    provenance checking for a second data shape."""
+    return [
+        {"field": field, "statement": data["value"], "pack_source": data.get("pack_source"), "claim_status": "SUPPORTED"}
+        for field, data in story_record.items() if data.get("value") is not None
+    ]
+
+
+def annotate_story_record(story_record, pack, semantic_status=None):
+    """Combines the deterministic provenance check (annotate_provenance,
+    UNCHANGED) with the semantic claim_status check (audit_story_record_claims)
+    -- a field is only 'supported' if BOTH agree; either one failing
+    forces the field to unsupported, never partially trusted."""
+    entries = _story_record_to_audit_entries(story_record)
+    annotated = annotate_provenance(entries, pack)
+    by_field = {e["field"]: e for e in annotated}
+    semantic_status = semantic_status or {}
+
+    result = {}
+    for field, data in story_record.items():
+        has_value = data.get("value") is not None
+        entry = by_field.get(field)
+        prov_ok = bool(entry and entry.get("provenance_valid"))
+        sem_ok = semantic_status.get(field) in ("SUPPORTED", "QUALIFIED")
+        if has_value and prov_ok and sem_ok:
+            result[field] = {"value": data["value"], "pack_source": data["pack_source"], "status": "supported"}
+        else:
+            result[field] = {"value": None, "pack_source": None, "status": "unsupported"}
+    return result
+
+
+def _unresolved_story_fields(story_record_before, annotated):
+    """Fields that HAD a value proposed but got forced to unsupported --
+    the actual repair target. A field the model itself already marked
+    unsupported is not 'unresolved', it's just honestly incomplete."""
+    return [f for f, before in story_record_before.items()
+            if before.get("value") is not None and annotated[f]["status"] == "unsupported"]
+
+
+def repair_story_record(openai_client, pack, story_record, unresolved_fields):
+    """Mirrors repair_briefing()'s pattern: feed back ONLY the specific
+    fields that failed verification, ask for a corrected value with a
+    real citation or an honest 'unsupported' -- never touches a field
+    that wasn't flagged."""
+    facts_block = "\n".join(f"- {f}" for f in _pack_fact_lines(pack))
+    flagged = "\n".join(
+        f'- {f}: was "{story_record[f]["value"]}" (citing {story_record[f].get("pack_source")}) -- rejected, not genuinely traceable'
+        for f in unresolved_fields
+    )
+    fields_block = "\n".join(f"- {name}: {STORY_RECORD_FIELD_DEFINITIONS[name]}" for name in unresolved_fields)
+    prompt = f"""Here is a Story Record extraction, and a list of specific fields an independent audit
+rejected as not genuinely traceable to the allowed facts.
+
+ALLOWED FACTS (unchanged):
+{facts_block}
+
+FIELDS REJECTED:
+{flagged}
+
+FIELD DEFINITIONS (for the rejected fields only):
+{fields_block}
+
+For EACH rejected field: either provide a corrected value with a real [TAG:id] citation from the allowed
+facts, or mark it unsupported (value: null, pack_source: null) if no real fact actually supports it. Do not
+touch any other field.
+
+Return ONLY a JSON object for the rejected fields, in the same shape: {{"FIELD_NAME": {{"value": ... or null, "pack_source": ... or null}}}}."""
+    response = openai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+        max_tokens=1000,
+    )
+    text = response.choices[0].message.content.strip()
+    if "```" in text:
+        text = text.split("```")[1].replace("json", "", 1).strip()
+    try:
+        fixes = json.loads(text)
+    except json.JSONDecodeError:
+        fixes = {}
+    updated = dict(story_record)
+    for field in unresolved_fields:
+        fix = fixes.get(field) or {"value": None, "pack_source": None}
+        updated[field] = {"value": fix.get("value"), "pack_source": fix.get("pack_source")}
+    return updated
+
+
+def _generate_story_record_with_repair(openai_client, anthropic_client, pack, max_repair_attempts=3):
+    story_record = extract_story_record(openai_client, pack)
+    semantic_status = audit_story_record_claims(anthropic_client, pack, story_record)
+    annotated = annotate_story_record(story_record, pack, semantic_status)
+    unresolved = _unresolved_story_fields(story_record, annotated)
+
+    attempts = 0
+    while unresolved and attempts < max_repair_attempts:
+        attempts += 1
+        story_record = repair_story_record(openai_client, pack, story_record, unresolved)
+        semantic_status = audit_story_record_claims(anthropic_client, pack, story_record)
+        annotated = annotate_story_record(story_record, pack, semantic_status)
+        unresolved = _unresolved_story_fields(story_record, annotated)
+
+    return annotated, attempts
+
+
+def run_story_record_pipeline(pack_path, out_dir=".", angle=None, max_repair_attempts=3):
+    """Pack -> ONE approved Story Record for ONE story (angle). Never
+    forces an angle the pack lacks material for -- that's
+    select_available_angles()'s job, called by run_weekly_story_pipeline
+    below, not this function (angle=None here means "use the full,
+    unnarrowed pack as one story", a valid choice for a caller who
+    already knows what they want)."""
+    pack = load_intelligence_pack(pack_path)
+    if angle:
+        pack = _narrow_pack_for_angle(pack, angle)
+    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    annotated, attempts = _generate_story_record_with_repair(openai_client, anthropic_client, pack, max_repair_attempts)
+    supported_count = sum(1 for v in annotated.values() if v["status"] == "supported")
+    country_code = pack.get("country", {}).get("code", "XX")
+
+    result = {
+        "generatedAt": datetime.now().isoformat(),
+        "packCountry": pack.get("country", {}).get("name"),
+        "packCountryCode": country_code,
+        "packAssembledAt": pack.get("assembledAt"),
+        "angle": angle,
+        "angleLabel": ANGLE_DEFINITIONS[angle]["label"] if angle else None,
+        "repairAttempts": attempts,
+        "storyRecord": annotated,
+        "supportedFieldCount": supported_count,
+        "totalFieldCount": len(annotated),
+    }
+
+    suffix = angle or "full"
+    out_path = os.path.join(out_dir, f"story_record_{country_code}_{suffix}.json")
+    with open(out_path, "w") as f:
+        json.dump(result, f, indent=2)
+
+    return result, out_path
+
+
+def run_weekly_story_pipeline(pack_path, out_dir=".", max_repair_attempts=3):
+    """The '1 story/week' policy entry point: picks the SINGLE most
+    fact-rich available angle (select_available_angles' own
+    most-fact-rich-first ordering) and builds one Story Record from it.
+    Returns (None, None) if the pack has no angle with enough real
+    material for a story this week -- never forces one."""
+    pack = load_intelligence_pack(pack_path)
+    angles = select_available_angles(pack, max_angles=1)
+    if not angles:
+        return None, None
+    return run_story_record_pipeline(pack_path, out_dir, angle=angles[0], max_repair_attempts=max_repair_attempts)
+
+
+def build_story_pack(story_result):
+    """Wraps an approved Story Record into a 'pack'-shaped object the
+    EXISTING generation pipeline (build_closed_book_prompt,
+    generate_closed_book_briefing, audit_briefing_claims,
+    repair_briefing, run_closed_book_pipeline) consumes COMPLETELY
+    UNCHANGED -- see _pack_fact_lines' storyRecord branch above. This is
+    the one function that turns "an approved story" into something the
+    rest of this file already knows how to read."""
+    return {
+        "country": {"code": story_result.get("packCountryCode"), "name": story_result.get("packCountry")},
+        "assembledAt": story_result.get("packAssembledAt"),
+        "storyRecord": story_result["storyRecord"],
+    }
+
+
+def run_platform_from_story(story_result, content_format, out_dir=".", max_repair_attempts=3):
+    """Story -> ONE platform piece, by building a story-pack and handing
+    it to the EXISTING, unmodified run_closed_book_pipeline(). Adds no
+    new generation/audit logic of its own -- it only prepares the input
+    the existing, already-proven pipeline reads."""
+    story_pack = build_story_pack(story_result)
+    tmp_path = os.path.join(out_dir, f"_story_pack_{story_result.get('packCountryCode', 'XX')}_{story_result.get('angle') or 'full'}.json")
+    with open(tmp_path, "w") as f:
+        json.dump(story_pack, f, indent=2)
+    return run_closed_book_pipeline(tmp_path, out_dir, max_repair_attempts=max_repair_attempts, content_format=content_format)
+
+
 def _generate_audit_repair_loop(openai_client, anthropic_client, pack, content_format, max_repair_attempts, angle=None):
     """Shared by run_closed_book_pipeline() and run_multi_angle_pipeline()
     -- identical generate -> audit -> repair cycle either way; only the
@@ -842,13 +1199,33 @@ if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
         print("Usage: python3 zetu_closed_book_writer.py <intelligence_pack.json> [out_dir] [FORMAT] [--multi-angle]")
+        print("       python3 zetu_closed_book_writer.py <intelligence_pack.json> [out_dir] --story")
+        print("       python3 zetu_closed_book_writer.py <story_record.json> [out_dir] <FORMAT> --from-story")
         print("       FORMAT: ATLAS_BRIEFING|ZETU_SHOW_COLD_OPEN|LINKEDIN_ARTICLE|YOUTUBE_SCRIPT|SUBSTACK_NEWSLETTER")
         sys.exit(1)
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     out_dir = args[1] if len(args) > 1 else "."
     fmt = args[2] if len(args) > 2 else "ATLAS_BRIEFING"
 
-    if "--multi-angle" in sys.argv:
+    if "--story" in sys.argv:
+        result, out_path = run_weekly_story_pipeline(args[0], out_dir)
+        if result is None:
+            print("No angle in this pack has enough real material for a story this week -- nothing generated.")
+        else:
+            print(f"Story Record for {result['packCountry']} ({result['angleLabel']}) -- {result['supportedFieldCount']}/{result['totalFieldCount']} fields supported, repairAttempts={result['repairAttempts']}\n")
+            for field, data in result["storyRecord"].items():
+                mark = "OK" if data["status"] == "supported" else "--"
+                print(f"  [{mark}] {field}: {data['value'] if data['value'] else '(unsupported)'}")
+            print(f"\nSaved to: {out_path}")
+    elif "--from-story" in sys.argv:
+        with open(args[0]) as f:
+            story_result = json.load(f)
+        result, out_path = run_platform_from_story(story_result, fmt, out_dir)
+        print(f"[{fmt} from story] ({len(result['briefing'].split())} words), accepted={result['accepted']}, repairAttempts={result['repairAttempts']}:\n")
+        print(result["briefing"])
+        print(f"\nUnsupported claims: {result['unsupportedClaimCount']}")
+        print(f"Saved to: {out_path}")
+    elif "--multi-angle" in sys.argv:
         results = run_multi_angle_pipeline(args[0], out_dir, content_format=fmt)
         if not results:
             print(f"[{fmt}/multi-angle] No angle had enough real material for this pack -- nothing generated.")
