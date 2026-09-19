@@ -126,6 +126,32 @@ ok("The style-only voice guide replaces the mandatory-story line with an optiona
     "ONLY if one genuinely exists" in load_voice_guide_style_only(), "mandatory-story override text missing",
 ))
 
+# ============================================================
+# Fix after a real founder complaint: a real, current-year, VERIFIED
+# fact (year=2025, generated in 2026) was written as "projected to
+# reach... by 2025" -- future tense for a year already in the past,
+# because the prompt never told the model what today's date is.
+# ============================================================
+print("\n=== TENSE CORRECTNESS (TODAY'S DATE ANCHOR) ===")
+
+import datetime as _datetime
+
+ok("the prompt injects the REAL current date, not a placeholder", lambda: assert_(
+    _datetime.datetime.now().strftime("%Y-%m-%d") in build_closed_book_prompt(RICH_PACK),
+    "today's actual date string is not present in the prompt",
+))
+
+ok("HARD RULE 11 (tense correctness for dated facts) is present in the prompt", lambda: assert_(
+    "already happened: state it as a recorded fact" in build_closed_book_prompt(RICH_PACK),
+    "the past/future tense rule is missing from the prompt",
+))
+
+ok("HARD RULE 11 explicitly forbids 'projected to reach... by' / 'forecasted to be... in' phrasing for a past year", lambda: assert_(
+    "is projected to reach... by 2025" in build_closed_book_prompt(RICH_PACK)
+    and "is forecasted to be... in 2025" in build_closed_book_prompt(RICH_PACK),
+    "the specific bad phrasing pattern is not named as an example to avoid",
+))
+
 print(f"\n{'PASS' if not failures else f'FAIL ({len(failures)})'}")
 if failures:
     exit(1)
