@@ -293,6 +293,17 @@ TASK_FRAMING = {
         f"throat-clearing context the viewer doesn't need in the first 2 seconds. This is entertainment/discovery "
         f"first, not a business memo."
     ),
+    "ZETU_SHOW_EPISODE": lambda country, fact_count=0: (
+        f"Write a full spoken video script about {country}, in Michael's voice, for a Zetu Show investigative "
+        f"episode -- the long-form documentary format, following the show's own investigation formula: 'Where is "
+        f"the opportunity?' This is narration meant to be read aloud on camera across a full episode -- short "
+        f"sentences, natural spoken rhythm, no bullet points, no markdown tables. TARGET 1200-1800 words (roughly "
+        f"8-12 minutes read aloud) -- cite at least {_fact_floor(fact_count, 20)} distinct facts across the "
+        f"chapters you're told to include below. {_ANTI_DRIFT_RULE} Structure the episode as a sequence of "
+        f"clearly separated spoken chapters, following the chapter plan given below EXACTLY -- do not add a "
+        f"chapter that isn't listed as included, and do not skip one that is. End on the CONTINUE ON ZETU "
+        f"chapter with the required CTA."
+    ),
 }
 
 # Per-format generation/repair token ceiling -- a fixed 1500 (the original
@@ -306,6 +317,7 @@ _MAX_TOKENS_BY_FORMAT = {
     "YOUTUBE_SCRIPT": 3000,
     "SUBSTACK_NEWSLETTER": 2500,
     "SHORT_FORM_VIDEO": 400,
+    "ZETU_SHOW_EPISODE": 4500,
 }
 _AUDIT_MAX_TOKENS_BY_FORMAT = {
     "ATLAS_BRIEFING": 2000,
@@ -318,6 +330,7 @@ _AUDIT_MAX_TOKENS_BY_FORMAT = {
     "YOUTUBE_SCRIPT": 6000,
     "SUBSTACK_NEWSLETTER": 6000,
     "SHORT_FORM_VIDEO": 1200,
+    "ZETU_SHOW_EPISODE": 8000,
 }
 _OUTPUT_SUFFIX = {
     "ATLAS_BRIEFING": "atlas",
@@ -326,6 +339,7 @@ _OUTPUT_SUFFIX = {
     "YOUTUBE_SCRIPT": "youtube_script",
     "SUBSTACK_NEWSLETTER": "substack_newsletter",
     "SHORT_FORM_VIDEO": "short_form_video",
+    "ZETU_SHOW_EPISODE": "show_episode",
 }
 
 
@@ -562,6 +576,65 @@ def _short_form_structure_block():
     )
 
 
+# ============================================================
+# The full Zetu Show episode -- the 9-chapter investigative documentary
+# format (real founder correction: the actual bridge between
+# content:show's chapter structure and the evidence-safe pipeline).
+# Structurally DIFFERENT from every other format here: some chapters
+# are only real if the story supports the field they depend on --
+# content-planner.mjs's own design (buildZetuShowEpisodeBrief's
+# narrativeSections) treats an "investigation" chapter with nothing to
+# investigate as a narrative defect, not something to fill with an
+# honest "nothing here" sentence (contrast with the 5-part structure's
+# own "never skip, always disclose" rule, which is right for a short
+# article but wrong for a 9-chapter documentary arc). This mirrors that
+# real, tested logic exactly, computed from the SAME Story Record
+# fields already extracted and audited -- never left to model judgment.
+# ============================================================
+
+ZETU_SHOW_EPISODE_CHAPTERS = (
+    ("THE QUESTION", None),
+    ("THE STORY", "SIGNAL"),
+    ("THE EVIDENCE", "PROOF"),
+    ("THE INVESTIGATION", "SIGNAL"),
+    ("THE OPPORTUNITY", "OPPORTUNITY"),
+    ("THE BUILDERS", "BUILDER"),
+    ("THE OBSTACLE", "OBSTACLE"),
+    ("THE MISSION", None),
+    ("CONTINUE ON ZETU", None),
+)
+
+
+def _show_episode_chapter_plan(story_record):
+    """(chapter, included) pairs -- a chapter with field=None is always
+    included (THE QUESTION/THE MISSION/CONTINUE ON ZETU); every other
+    chapter is included only if its dependent Story Record field is
+    genuinely supported. Pure, deterministic, no model judgment."""
+    return [
+        (chapter, True if field is None else story_record.get(field, {}).get("status") == "supported")
+        for chapter, field in ZETU_SHOW_EPISODE_CHAPTERS
+    ]
+
+
+def _show_episode_structure_block():
+    return (
+        "THE ZETU SHOW 9-CHAPTER FORMAT (only the chapters marked INCLUDE in the chapter plan given separately "
+        "below actually appear in your script -- this just describes what each chapter IS):\n"
+        "THE QUESTION: the central investigative question this episode is chasing (always included).\n"
+        "THE STORY: the real signal or development that anchors this investigation.\n"
+        "THE EVIDENCE: what real evidence backs the story so far.\n"
+        "THE INVESTIGATION: digging into that evidence on camera -- what it reveals, what it doesn't yet answer.\n"
+        "THE OPPORTUNITY: name ONE specific, real opportunity from the facts -- never a vague sector, and never "
+        "imply a business match the facts don't state.\n"
+        "THE BUILDERS: a real, named business or person already acting, with their OBSERVED (never VERIFIED) "
+        "capability.\n"
+        "THE OBSTACLE: what's blocking it, per a real stated limitation or retired opportunity.\n"
+        "THE MISSION: Zetu's own framing of why this investigation matters to the platform's mission (always "
+        "included -- this is Zetu's own voice, not a factual claim about the country).\n"
+        "CONTINUE ON ZETU: the required CTA (always included, see below)."
+    )
+
+
 def build_closed_book_prompt(pack, content_format="ATLAS_BRIEFING", angle=None):
     """CONTRACT: when `angle` is given, `pack` MUST already be the
     angle-narrowed pack (_narrow_pack_for_angle's output) -- this
@@ -601,6 +674,8 @@ def build_closed_book_prompt(pack, content_format="ATLAS_BRIEFING", angle=None):
         structure_block = "\n\n" + _five_part_structure_block(spoken=True)
     elif content_format in _SHORT_FORM_STRUCTURE_FORMATS:
         structure_block = "\n\n" + _short_form_structure_block()
+    elif content_format == "ZETU_SHOW_EPISODE":
+        structure_block = "\n\n" + _show_episode_structure_block()
 
     story_note = ""
     if "storyRecord" in pack:
@@ -624,9 +699,35 @@ def build_closed_book_prompt(pack, content_format="ATLAS_BRIEFING", angle=None):
             f"substitute for it."
         )
 
+    chapter_plan_note = ""
+    if content_format == "ZETU_SHOW_EPISODE" and "storyRecord" in pack:
+        plan = _show_episode_chapter_plan(pack["storyRecord"])
+        included = [c for c, ok in plan if ok]
+        skipped = [c for c, ok in plan if not ok]
+        chapter_plan_note = (
+            f"\n\nCHAPTER PLAN FOR THIS EPISODE (computed from what THIS story actually supports -- follow it "
+            f"exactly, it is not optional): INCLUDE, in this order: {', '.join(included)}."
+        )
+        if skipped:
+            chapter_plan_note += (
+                f" SKIP entirely (no real material exists for these this time -- do not force them, do not "
+                f"apologize for or mention skipping them on camera, just move directly from one included "
+                f"chapter to the next): {', '.join(skipped)}."
+            )
+        else:
+            chapter_plan_note += " Every chapter has real material this time -- include all of them."
+        chapter_plan_note += (
+            " YOU MUST ACTUALLY WRITE ALL THE WAY THROUGH TO THE LAST INCLUDED CHAPTER, ENDING ON 'CONTINUE ON "
+            "ZETU' WITH THE REQUIRED CTA -- a script that stops partway through the plan above (e.g. ending on "
+            "THE OPPORTUNITY without ever reaching THE MISSION or CONTINUE ON ZETU) is INCOMPLETE and unusable, "
+            "even if every sentence written so far is accurate. If you need to keep earlier chapters shorter to "
+            "make room, do that -- but you must reach the end of the plan. This is as non-negotiable as the "
+            "SUBJECT_LINE requirement is for a newsletter."
+        )
+
     today = datetime.now().strftime("%Y-%m-%d")
 
-    return f"""{framing}{structure_block}{story_note}{cta_override}
+    return f"""{framing}{structure_block}{story_note}{cta_override}{chapter_plan_note}
 
 TODAY'S DATE IS {today}. Use this to judge tense correctly for every dated fact below -- see HARD RULE 11.
 
@@ -1372,7 +1473,7 @@ if __name__ == "__main__":
         print("Usage: python3 zetu_closed_book_writer.py <intelligence_pack.json> [out_dir] [FORMAT] [--multi-angle]")
         print("       python3 zetu_closed_book_writer.py <intelligence_pack.json> [out_dir] --story")
         print("       python3 zetu_closed_book_writer.py <story_record.json> [out_dir] <FORMAT> --from-story")
-        print("       FORMAT: ATLAS_BRIEFING|ZETU_SHOW_COLD_OPEN|LINKEDIN_ARTICLE|YOUTUBE_SCRIPT|SUBSTACK_NEWSLETTER|SHORT_FORM_VIDEO")
+        print("       FORMAT: ATLAS_BRIEFING|ZETU_SHOW_COLD_OPEN|LINKEDIN_ARTICLE|YOUTUBE_SCRIPT|SUBSTACK_NEWSLETTER|SHORT_FORM_VIDEO|ZETU_SHOW_EPISODE")
         sys.exit(1)
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     out_dir = args[1] if len(args) > 1 else "."
