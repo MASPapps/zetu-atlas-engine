@@ -1053,17 +1053,57 @@ def run_story_record_pipeline(pack_path, out_dir=".", angle=None, max_repair_att
     return result, out_path
 
 
-def run_weekly_story_pipeline(pack_path, out_dir=".", max_repair_attempts=3):
-    """The '1 story/week' policy entry point: picks the SINGLE most
-    fact-rich available angle (select_available_angles' own
-    most-fact-rich-first ordering) and builds one Story Record from it.
-    Returns (None, None) if the pack has no angle with enough real
-    material for a story this week -- never forces one."""
+def _select_best_story_candidate(candidates):
+    """Picks the candidate result with the highest supportedFieldCount;
+    a tie breaks toward the earlier-ranked candidate (lower index,
+    matching select_available_angles' own deterministic ranking).
+    `candidates` is a list of run_story_record_pipeline() result dicts.
+    Pure, synchronous, no I/O -- the only piece of the empirical
+    selection below that can be tested without a real API call."""
+    return max(range(len(candidates)), key=lambda i: (candidates[i]["supportedFieldCount"], -i))
+
+
+def run_weekly_story_pipeline(pack_path, out_dir=".", max_repair_attempts=3, candidate_angles=2):
+    """The '1 story/week' policy entry point.
+
+    Real evidence from two live Kenya runs showed neither raw fact
+    count, nor category-type diversity, nor an angle's own trust-state
+    reliably predicts which angle will produce a fuller story once
+    extracted: tech_and_innovation (100% INSUFFICIENT_EVIDENCE own
+    material) outperformed investment_signals (100% QUALIFIED/VERIFIED
+    own material) 8/12 supported fields to 4/12. A code-only heuristic
+    trying to predict this from raw pack shape would be a guess dressed
+    up as a formula.
+
+    Instead: extract full Story Records for the top `candidate_angles`
+    angles (select_available_angles' own ranking) and empirically keep
+    whichever ACTUALLY produced more supported fields -- selection by
+    real outcome, not prediction. Real cost: `candidate_angles`
+    extraction+audit(+repair) cycles instead of 1, but platform
+    generation (the expensive part) still only ever runs once, against
+    the winner. Returns (None, None) if the pack has no angle with
+    enough real material for a story this week -- never forces one,
+    and never runs more candidates than angles actually available."""
     pack = load_intelligence_pack(pack_path)
-    angles = select_available_angles(pack, max_angles=1)
+    angles = select_available_angles(pack, max_angles=candidate_angles)
     if not angles:
         return None, None
-    return run_story_record_pipeline(pack_path, out_dir, angle=angles[0], max_repair_attempts=max_repair_attempts)
+
+    candidates = [run_story_record_pipeline(pack_path, out_dir, angle=angle, max_repair_attempts=max_repair_attempts) for angle in angles]
+    best_index = _select_best_story_candidate([result for result, _ in candidates])
+    winner_result, winner_path = candidates[best_index]
+
+    # Self-documenting: the persisted artifact records what else was
+    # considered and why this one won, so a human reading it later
+    # doesn't have to guess or re-run anything to see the comparison.
+    winner_result["candidatesConsidered"] = [
+        {"angle": result["angle"], "angleLabel": result["angleLabel"], "supportedFieldCount": result["supportedFieldCount"]}
+        for result, _ in candidates
+    ]
+    with open(winner_path, "w") as f:
+        json.dump(winner_result, f, indent=2)
+
+    return winner_result, winner_path
 
 
 def build_story_pack(story_result):
@@ -1212,6 +1252,12 @@ if __name__ == "__main__":
         if result is None:
             print("No angle in this pack has enough real material for a story this week -- nothing generated.")
         else:
+            if len(result.get("candidatesConsidered", [])) > 1:
+                print("Candidates considered:")
+                for c in result["candidatesConsidered"]:
+                    mark = " <- chosen" if c["angle"] == result["angle"] else ""
+                    print(f"  {c['angleLabel']}: {c['supportedFieldCount']} fields supported{mark}")
+                print()
             print(f"Story Record for {result['packCountry']} ({result['angleLabel']}) -- {result['supportedFieldCount']}/{result['totalFieldCount']} fields supported, repairAttempts={result['repairAttempts']}\n")
             for field, data in result["storyRecord"].items():
                 mark = "OK" if data["status"] == "supported" else "--"

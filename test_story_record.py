@@ -17,6 +17,7 @@ from zetu_closed_book_writer import (
     _story_record_to_audit_entries, annotate_story_record,
     _unresolved_story_fields, build_story_pack, _pack_fact_lines,
     _pack_valid_tags, validate_claim_source, build_closed_book_prompt,
+    _select_best_story_candidate,
 )
 
 failures = []
@@ -198,6 +199,33 @@ ok("a story-pack's prompt still carries the universal 5-part structure and hard 
         assert_("[STORY:SIGNAL]" in prompt),
     )
 )())
+
+# ============================================================
+# 6. Empirical best-candidate selection -- fix after real evidence
+# showed no code-only heuristic (raw fact count, category diversity,
+# trust-state) reliably predicts which angle produces a fuller story.
+# _select_best_story_candidate() replaces prediction with picking
+# whichever candidate ACTUALLY produced more supported fields.
+# ============================================================
+print("\n=== EMPIRICAL BEST-CANDIDATE SELECTION ===")
+
+ok("the candidate with more supported fields wins, regardless of order", lambda: (
+    assert_(_select_best_story_candidate([{"supportedFieldCount": 4}, {"supportedFieldCount": 8}]) == 1),
+    assert_(_select_best_story_candidate([{"supportedFieldCount": 8}, {"supportedFieldCount": 4}]) == 0),
+))
+
+ok("a tie breaks toward the earlier-ranked (lower-index) candidate, matching select_available_angles' own ranking", lambda: (
+    assert_(_select_best_story_candidate([{"supportedFieldCount": 5}, {"supportedFieldCount": 5}]) == 0),
+    assert_(_select_best_story_candidate([{"supportedFieldCount": 3}, {"supportedFieldCount": 5}, {"supportedFieldCount": 5}]) == 1, "of the two tied candidates, the earlier one (index 1) must win over index 2"),
+))
+
+ok("a single candidate is trivially selected (the max_angles=1 / thin-pack case)", lambda: (
+    assert_(_select_best_story_candidate([{"supportedFieldCount": 0}]) == 0),
+))
+
+ok("reproduces the actual real-world finding: a lower-trust angle (tech_and_innovation, 8 fields) correctly beats a higher-trust angle (investment_signals, 4 fields) that happens to be ranked first", lambda: (
+    assert_(_select_best_story_candidate([{"supportedFieldCount": 4}, {"supportedFieldCount": 8}]) == 1)
+))
 
 print(f"\n{'PASS' if not failures else f'FAIL ({len(failures)}): ' + ', '.join(failures)}")
 import sys
